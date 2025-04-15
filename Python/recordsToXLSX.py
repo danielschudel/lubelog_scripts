@@ -12,6 +12,7 @@ urlBase = sys.argv[1]
 urlUpgrades = urlBase + "/api/vehicle/upgraderecords" + "?vehicleId="
 urlService  = urlBase + "/api/vehicle/servicerecords" + "?vehicleId="
 urlRepair   = urlBase + "/api/vehicle/repairrecords"  + "?vehicleId="
+urlTax      = urlBase + "/api/vehicle/taxrecords"     + "?vehicleId="
 urlVehicles = urlBase + "/api/vehicles"
 
 def odometerSort(e):
@@ -20,13 +21,14 @@ def odometerSort(e):
 vehicles = requests.get(urlVehicles)
 vehicles = json.loads(vehicles.content)
 for v in vehicles:
+    title="{} {} {}, Plate {}".format(v['year'], v['make'], v['model'], v['licensePlate'])
     identifier="{}-{}-{}-{}-{}".format(v['id'], v['year'], v['make'], v['model'], v['licensePlate'])
     identifier=identifier.replace(" ", "_")
     print("Processing vehicle: {}".format(identifier))
 
     combined = list()
 
-    for url in [urlUpgrades, urlService, urlRepair]:
+    for url in [urlUpgrades, urlService, urlRepair, urlTax]:
         records = requests.get("{}{}".format(url,v['id']))
         records = json.loads(records.content)
         for r in records:
@@ -34,7 +36,11 @@ for v in vehicles:
             for key in ["date", "description", "notes"]:
                 current[key] = r[key]
 
-            current['odometer'] = int(r['odometer'])
+            current['date'] = datetime.strptime(r['date'],"%m/%d/%Y")
+            if 'odometer' in r:
+                current['odometer'] = int(r['odometer'])
+            else:
+                current['odometer'] = None
             current['cost']     = float(r['cost'])
 
             if current['notes'] == None:
@@ -49,8 +55,10 @@ for v in vehicles:
     workbook = xlsxwriter.Workbook(filename)
     formatCost     = workbook.add_format({'num_format': '$#,##0', 'align': 'right'})
     formatOdometer = workbook.add_format({'num_format':  '#,##0', 'align': 'right'})
-    formatDate     = workbook.add_format({'num_format': 'mm-dd-yyyy', 'align': 'right'})
+    formatDate     = workbook.add_format({'num_format': 'mm dd yyyy', 'align': 'right'})
+
     formatBold     = workbook.add_format({'bold': True})
+    formatBoldRight= workbook.add_format({'align': 'right', 'bold': True})
     formatWrap     = workbook.add_format({'text_wrap': True})
     formatTop      = workbook.add_format({'valign': 'top'})
 
@@ -58,15 +66,21 @@ for v in vehicles:
     worksheet = workbook.add_worksheet()
 
     row=0
-    col=0
-    for key in [ "Date", "Odometer", "Description", "Notes", "Cost" ]:
-        worksheet.write(row, col, key, formatBold)
-        col+=1
+    worksheet.write(row, 0, "Date", formatBoldRight)
+    worksheet.write(row, 1, "Odometer", formatBoldRight)
+    worksheet.write(row, 2, "Description", formatBold)
+    worksheet.write(row, 3, "Notes", formatBold)
+    worksheet.write(row, 4, "Cost", formatBoldRight)
 
-    for r in sorted(combined, key=lambda x: x['odometer']):
+    for r in sorted(combined, key=lambda x: x['date'], reverse=True):
         row+=1
-        worksheet.write_datetime(row, 0, datetime.strptime(r['date'], "%m/%d/%Y"))
-        worksheet.write_number(row, 1, r["odometer"])
+        worksheet.write_datetime(row, 0, r["date"])
+
+        if r["odometer"] == None:
+            worksheet.write_blank(row, 1, None)
+        else:
+            worksheet.write_number(row, 1, r["odometer"])
+
         worksheet.write_string(row, 2, r["description"])
         worksheet.write_string(row, 3, r["notes"])
         if r['cost'] == 0:
@@ -79,5 +93,14 @@ for v in vehicles:
     worksheet.set_column('C:C', 25)
     worksheet.set_column('D:D', 35, formatWrap)
     worksheet.set_column('E:E', 10, formatCost)
+    worksheet.set_landscape()
+    worksheet.set_paper(1)
+    worksheet.center_horizontally()
+    worksheet.set_margins(0.5, 0.5, 0.5, 0.5)
+    worksheet.set_header(title)
+    worksheet.set_footer("Page &P of &N")
+    worksheet.repeat_rows(0)
+    worksheet.hide_gridlines(0)
+    worksheet.fit_to_pages(1, 0)
     workbook.close()
     print("             Saved: {}".format(filename))
